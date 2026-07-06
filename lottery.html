@@ -581,8 +581,655 @@
     hide() { document.getElementById('view-config').classList.remove('active'); }
   };
 
-  // === Papa Parse (内联) ===
-  // [Papa Parse minified source will be pasted here — see Task 4]
+  // ========== Simple CSV Parser (replaces Papa Parse) ==========
+  function parseCSV(text) {
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { cell += '"'; i++; }
+          else { inQuotes = false; }
+        } else { cell += ch; }
+      } else {
+        if (ch === '"') { inQuotes = true; }
+        else if (ch === ',') { row.push(cell); cell = ''; }
+        else if (ch === '\n' || (ch === '\r' && text[i + 1] !== '\n')) {
+          row.push(cell);
+          if (row.some(c => c !== '')) rows.push(row);
+          row = []; cell = '';
+        } else if (ch !== '\r') { cell += ch; }
+      }
+    }
+    row.push(cell);
+    if (row.some(c => c !== '')) rows.push(row);
+    return rows;
+  }
+
+  // ========== ViewController ==========
+  const ViewController = {
+    switchTo(viewId) {
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.getElementById(viewId).classList.add('active');
+    }
+  };
+
+  // ========== ImportView ==========
+  const ImportView = {
+    _pendingNames: null,
+
+    init() {
+      const dropZone = document.getElementById('dropZone');
+      const fileInput = document.getElementById('fileInput');
+      dropZone.addEventListener('click', () => fileInput.click());
+      dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault(); dropZone.classList.add('dragover');
+      });
+      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault(); dropZone.classList.remove('dragover');
+        const file = e.dataTransfer.files[0];
+        if (file) this.processFile(file);
+      });
+      fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) this.processFile(file);
+      });
+      document.getElementById('btnImportBack').addEventListener('click', () => ConfigView.show());
+      document.getElementById('btnImportNext').addEventListener('click', () => this.confirmImport());
+    },
+
+    processFile(file) {
+      const ext = file.name.split('.').pop().toLowerCase();
+      document.getElementById('importError').style.display = 'none';
+      if (ext !== 'csv') {
+        document.getElementById('importError').style.display = 'block';
+        document.getElementById('importError').textContent = '仅支持 CSV 格式（请将 Excel 另存为 CSV UTF-8 编码）';
+        return;
+      }
+      // Try UTF-8 first
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target.result;
+        const rows = parseCSV(text);
+        const firstCell = (rows[0] && rows[0][0]) || '';
+        if (this._looksGarbled(firstCell)) {
+          this._readAsGBK(file); return;
+        }
+        this._handleResult(rows);
+      };
+      reader.readAsText(file, 'UTF-8');
+    },
+
+    _readAsGBK(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const decoder = new TextDecoder('gbk');
+        const text = decoder.decode(new Uint8Array(e.target.result));
+        this._handleResult(parseCSV(text));
+      };
+      reader.readAsArrayBuffer(file);
+    },
+
+    _looksGarbled(str) {
+      const bad = (str.match(/[�\x00-\x08\x0b\x0c\x0e-\x1f]/g) || []).length;
+      return bad > str.length * 0.3;
+    },
+
+    _handleResult(rows) {
+      if (!rows.length) {
+        document.getElementById('importError').style.display = 'block';
+        document.getElementById('importError').textContent = '未识别到任何姓名';
+        return;
+      }
+      let colIdx = 0;
+      let dataRows = rows;
+      const header = rows[0];
+      const headerStr = (Array.isArray(header) ? header.join(' ') : String(header)).toLowerCase();
+      if (headerStr.includes('姓名') || headerStr.includes('名字') || headerStr.includes('name')) {
+        for (let i = 0; i < header.length; i++) {
+          const h = (header[i] || '').toLowerCase();
+          if (h.includes('姓名') || h.includes('名字') || h.includes('name')) { colIdx = i; break; }
+        }
+        dataRows = rows.slice(1);
+      }
+      if (dataRows.length && dataRows[0].length) {
+        const firstVal = String(dataRows[0][colIdx] || '').trim();
+        if (firstVal.length > 10 || firstVal.toLowerCase() === 'name' || firstVal === '姓名') {
+          dataRows = dataRows.slice(1);
+        }
+      }
+      const names = dataRows.map(row => String(row[colIdx] || '').trim())
+        .filter(name => name.length > 0 && name.length < 50);
+      if (!names.length) {
+        document.getElementById('importError').style.display = 'block';
+        document.getElementById('importError').textContent = '未识别到任何姓名，请检查文件格式';
+        return;
+      }
+      const totalNeeded = StateManager.state.config.reduce((s, p) => s + p.count, 0);
+      if (names.length < totalNeeded) {
+        document.getElementById('importError').style.display = 'block';
+        document.getElementById('importError').textContent =
+          `名单人数（${names.length}）少于奖项总人数（${totalNeeded}），差额 ${totalNeeded - names.length} 人`;
+      }
+      const previewArea = document.getElementById('previewArea');
+      const previewList = document.getElementById('previewList');
+      previewList.innerHTML = names.slice(0, 200)
+        .map(n => `<span class="name-tag">${this._esc(n)}</span>`).join('');
+      if (names.length > 200) {
+        previewList.innerHTML += `<p style="width:100%;text-align:center;color:var(--text-dim);">... 还有 ${names.length - 200} 人</p>`;
+      }
+      document.getElementById('previewCount').textContent = `共识别 ${names.length} 人`;
+      document.getElementById('importCount').textContent = names.length;
+      previewArea.style.display = 'block';
+      document.getElementById('btnImportNext').style.display = 'inline-flex';
+      this._pendingNames = names;
+    },
+
+    confirmImport() {
+      if (!this._pendingNames || !this._pendingNames.length) return;
+      StateManager.state.candidates = [...this._pendingNames];
+      StateManager.state.original = [...this._pendingNames];
+      StateManager.state.currentPrizeIdx = 0;
+      StateManager.state.currentSlotIdx = 0;
+      StateManager.state.winners = [];
+      StateManager.save();
+      this._pendingNames = null;
+      LotteryView.show();
+    },
+
+    _esc(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    },
+
+    show() {
+      ViewController.switchTo('view-import');
+      document.getElementById('previewArea').style.display = 'none';
+      document.getElementById('btnImportNext').style.display = 'none';
+      document.getElementById('importError').style.display = 'none';
+    },
+
+    hide() { document.getElementById('view-import').classList.remove('active'); }
+  };
+
+  // ========== ParticleEngine ==========
+  const ParticleEngine = {
+    canvas: null, ctx: null, particles: [], mode: 'idle', animId: null, PARTICLE_COUNT: 120,
+
+    init() {
+      this.canvas = document.getElementById('animCanvas');
+      this.ctx = this.canvas.getContext('2d');
+      this.resize();
+      window.addEventListener('resize', () => this.resize());
+      for (let i = 0; i < this.PARTICLE_COUNT; i++) this.particles.push(this._create());
+      this._loop();
+    },
+
+    resize() {
+      const dpr = window.devicePixelRatio || 1;
+      this.canvas.width = window.innerWidth * dpr;
+      this.canvas.height = window.innerHeight * dpr;
+      this.canvas.style.width = window.innerWidth + 'px';
+      this.canvas.style.height = window.innerHeight + 'px';
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    },
+
+    setMode(mode) { this.mode = mode; },
+
+    _create() {
+      return {
+        x: Math.random() * window.innerWidth,
+        y: Math.random() * window.innerHeight,
+        vx: (Math.random() - 0.5) * 0.6,
+        vy: (Math.random() - 0.5) * 0.6,
+        size: Math.random() * 2.5 + 0.5,
+        alpha: Math.random() * 0.5 + 0.2,
+        color: Math.random() > 0.5 ? '0, 240, 255' : '168, 85, 247'
+      };
+    },
+
+    burst(x, y, count) {
+      for (let i = 0; i < (count || 60); i++) {
+        const angle = (Math.PI * 2 * i) / (count || 60) + (Math.random() - 0.5) * 0.5;
+        const speed = Math.random() * 4 + 2;
+        this.particles.push({
+          x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+          size: Math.random() * 3 + 1, alpha: 1, color: '251, 191, 36',
+          life: 1, decay: 0.008 + Math.random() * 0.02
+        });
+      }
+    },
+
+    _update() {
+      const w = window.innerWidth, h = window.innerHeight, cx = w / 2, cy = h / 2;
+      for (let i = this.particles.length - 1; i >= 0; i--) {
+        const p = this.particles[i];
+        if (p.life !== undefined) {
+          p.life -= p.decay; p.x += p.vx; p.y += p.vy; p.vy += 0.02; p.alpha = p.life;
+          if (p.life <= 0) { this.particles.splice(i, 1); continue; }
+        } else {
+          if (this.mode === 'accelerate') {
+            const dx = cx - p.x, dy = cy - p.y, dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            p.vx += (dx / dist) * 0.03; p.vy += (dy / dist) * 0.03;
+            const spd = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+            if (spd > 4) { p.vx = (p.vx / spd) * 4; p.vy = (p.vy / spd) * 4; }
+          }
+          p.x += p.vx; p.y += p.vy;
+          if (p.x < -10) p.x = w + 10; if (p.x > w + 10) p.x = -10;
+          if (p.y < -10) p.y = h + 10; if (p.y > h + 10) p.y = -10;
+        }
+      }
+      const ambient = this.particles.filter(p => p.life === undefined).length;
+      if (ambient < this.PARTICLE_COUNT) this.particles.push(this._create());
+    },
+
+    _draw() {
+      const ctx = this.ctx, w = window.innerWidth, h = window.innerHeight;
+      ctx.clearRect(0, 0, w, h);
+      for (const p of this.particles) {
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${p.color}, ${p.alpha})`; ctx.fill();
+        if (p.life !== undefined && p.life > 0.5) {
+          ctx.beginPath(); ctx.arc(p.x, p.y, p.size * 2.5, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(${p.color}, ${p.alpha * 0.25})`; ctx.fill();
+        }
+      }
+    },
+
+    _loop() {
+      this._update(); this._draw();
+      this.animId = requestAnimationFrame(() => this._loop());
+    }
+  };
+
+  // ========== AudioEngine ==========
+  const AudioEngine = {
+    ctx: null, muted: false, humOsc: null, humGain: null,
+
+    init() {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const saved = localStorage.getItem('lottery_muted');
+      if (saved === 'true') this.setMuted(true);
+    },
+
+    setMuted(m) {
+      this.muted = m;
+      localStorage.setItem('lottery_muted', String(m));
+      document.getElementById('btnMute').textContent = m ? '🔇' : '🔊';
+    },
+
+    toggleMute() { this.setMuted(!this.muted); },
+
+    _ensure() {
+      if (!this.ctx) this.init();
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+    },
+
+    playTick() {
+      if (this.muted) return; this._ensure();
+      const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+      osc.connect(gain); gain.connect(this.ctx.destination);
+      osc.type = 'sine'; osc.frequency.value = 800 + Math.random() * 400;
+      gain.gain.setValueAtTime(0.06, this.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.06);
+      osc.start(); osc.stop(this.ctx.currentTime + 0.06);
+    },
+
+    startHum() {
+      if (this.muted) return; this._ensure();
+      this.humOsc = this.ctx.createOscillator();
+      this.humGain = this.ctx.createGain();
+      this.humOsc.connect(this.humGain); this.humGain.connect(this.ctx.destination);
+      this.humOsc.type = 'sawtooth'; this.humOsc.frequency.value = 60;
+      this.humGain.gain.setValueAtTime(0.03, this.ctx.currentTime);
+      this.humOsc.start();
+    },
+
+    stopHum() {
+      if (!this.humOsc) return;
+      this.humGain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.3);
+      this.humOsc.stop(this.ctx.currentTime + 0.3);
+      this.humOsc = null; this.humGain = null;
+    },
+
+    playReveal() {
+      if (this.muted) return; this._ensure();
+      const now = this.ctx.currentTime;
+      const o1 = this.ctx.createOscillator(), g1 = this.ctx.createGain();
+      o1.connect(g1); g1.connect(this.ctx.destination);
+      o1.type = 'sine'; o1.frequency.setValueAtTime(200, now);
+      o1.frequency.exponentialRampToValueAtTime(1200, now + 0.4);
+      g1.gain.setValueAtTime(0.12, now);
+      g1.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      o1.start(now); o1.stop(now + 0.5);
+      const o2 = this.ctx.createOscillator(), g2 = this.ctx.createGain();
+      o2.connect(g2); g2.connect(this.ctx.destination);
+      o2.type = 'triangle'; o2.frequency.setValueAtTime(80, now + 0.3);
+      o2.frequency.exponentialRampToValueAtTime(30, now + 0.8);
+      g2.gain.setValueAtTime(0.2, now + 0.3);
+      g2.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+      o2.start(now + 0.3); o2.stop(now + 0.8);
+    },
+
+    playCelebrate() {
+      if (this.muted) return; this._ensure();
+      const now = this.ctx.currentTime;
+      [523, 659, 784, 1047].forEach((freq, i) => {
+        const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+        osc.connect(gain); gain.connect(this.ctx.destination);
+        osc.type = 'sine'; const t = now + i * 0.1;
+        osc.frequency.setValueAtTime(freq, t);
+        gain.gain.setValueAtTime(0.08, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+        osc.start(t); osc.stop(t + 0.3);
+      });
+    },
+
+    playVoid() {
+      if (this.muted) return; this._ensure();
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
+      osc.connect(gain); gain.connect(this.ctx.destination);
+      osc.type = 'sine'; osc.frequency.setValueAtTime(300, now);
+      osc.frequency.exponentialRampToValueAtTime(40, now + 0.8);
+      gain.gain.setValueAtTime(0.1, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+      osc.start(now); osc.stop(now + 0.8);
+    }
+  };
+
+  // ========== DrawEngine ==========
+  const DrawEngine = {
+    canvas: null, ctx: null, running: false, animId: null,
+    names: [], targetName: '', currentOffset: 0, speed: 0,
+    phase: 'idle', flashAlpha: 0, FONT_SIZE: 72, CARD_HEIGHT: 100, VISIBLE_SLOTS: 7,
+
+    init() {
+      this.canvas = document.getElementById('animCanvas');
+      this.ctx = this.canvas.getContext('2d');
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+    },
+
+    startSpin(candidates, winnerName, onComplete) {
+      this.names = [...candidates].sort(() => Math.random() - 0.5);
+      if (!this.names.includes(winnerName)) this.names.push(winnerName);
+      this.names = this.names.sort(() => Math.random() - 0.5);
+      this.targetName = winnerName;
+      this.speed = 18; this.currentOffset = 0;
+      this.phase = 'spinning'; this.flashAlpha = 0;
+      this.running = true; this._onComplete = onComplete;
+      this._spinStartTime = performance.now();
+      AudioEngine.startHum();
+      this._tick();
+    },
+
+    _tick() {
+      if (!this.running) return;
+      const ctx = this.ctx, w = window.innerWidth, h = window.innerHeight;
+      ctx.fillStyle = 'rgba(10, 10, 15, 0.55)'; ctx.fillRect(0, 0, w, h);
+      if (this.phase === 'spinning') {
+        this.currentOffset += this.speed;
+        if (Math.floor(this.currentOffset / this.CARD_HEIGHT) !==
+            Math.floor((this.currentOffset - this.speed) / this.CARD_HEIGHT)) AudioEngine.playTick();
+        if (performance.now() - this._spinStartTime > 2500) this.phase = 'decelerating';
+      } else if (this.phase === 'decelerating') {
+        this.speed *= 0.985; this.currentOffset += this.speed;
+        AudioEngine.playTick();
+        if (this.speed < 0.3) {
+          this.phase = 'reveal'; AudioEngine.stopHum(); this._onReveal();
+        }
+      }
+      this._drawSlots(ctx, w, h);
+      if (this.flashAlpha > 0) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${this.flashAlpha})`;
+        ctx.fillRect(0, 0, w, h); this.flashAlpha *= 0.85;
+        if (this.flashAlpha < 0.01) this.flashAlpha = 0;
+      }
+      this.animId = requestAnimationFrame(() => this._tick());
+    },
+
+    _drawSlots(ctx, w, h) {
+      const cx = w / 2, cy = h / 2, offset = this.currentOffset, cardH = this.CARD_HEIGHT;
+      const windowH = cardH * this.VISIBLE_SLOTS, cardW = Math.min(w * 0.6, 600);
+      for (let i = -5; i < this.VISIBLE_SLOTS + 5; i++) {
+        const ni = Math.floor((offset + i * cardH) / cardH) % this.names.length;
+        const y = cy + i * cardH - (offset % cardH);
+        const name = this.names[Math.abs(ni)] || '';
+        const dist = Math.abs(y - cy) / (windowH / 2);
+        const alpha = Math.max(0.15, 1 - dist * 0.85);
+        const scale = Math.max(0.6, 1 - dist * 0.4);
+        ctx.save(); ctx.translate(cx, y); ctx.scale(scale, scale);
+        const grad = ctx.createLinearGradient(-cardW/2, 0, cardW/2, 0);
+        const isWinner = this.phase === 'reveal' && name === this.targetName;
+        grad.addColorStop(0, isWinner ? 'rgba(251,191,36,0.25)' : 'rgba(0,240,255,0.06)');
+        grad.addColorStop(1, isWinner ? 'rgba(251,191,36,0.25)' : 'rgba(168,85,247,0.06)');
+        ctx.fillStyle = grad; ctx.fillRect(-cardW/2, -cardH/2, cardW, cardH);
+        ctx.strokeStyle = isWinner ? `rgba(251,191,36,${alpha})` : `rgba(0,240,255,${alpha * 0.4})`;
+        ctx.lineWidth = isWinner ? 3 : 1; ctx.strokeRect(-cardW/2, -cardH/2, cardW, cardH);
+        ctx.fillStyle = isWinner ? `rgba(251,191,36,${alpha})` : `rgba(226,232,240,${alpha})`;
+        ctx.font = `bold ${this.FONT_SIZE * 0.8}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+        if (dist < 0.5) {
+          ctx.shadowColor = isWinner ? 'rgba(251,191,36,0.6)' : 'rgba(0,240,255,0.5)';
+          ctx.shadowBlur = 20;
+        }
+        ctx.fillText(name, 0, 0); ctx.shadowBlur = 0; ctx.restore();
+      }
+      const lineGrad = ctx.createLinearGradient(0, cy - 2, 0, cy + 2);
+      lineGrad.addColorStop(0, 'rgba(0,240,255,0)');
+      lineGrad.addColorStop(0.5, 'rgba(0,240,255,0.4)');
+      lineGrad.addColorStop(1, 'rgba(0,240,255,0)');
+      ctx.fillStyle = lineGrad; ctx.fillRect(cx - 320, cy - 2, 640, 4);
+    },
+
+    _onReveal() {
+      this.flashAlpha = 0.8;
+      AudioEngine.playReveal();
+      ParticleEngine.burst(window.innerWidth / 2, window.innerHeight / 2, 80);
+      setTimeout(() => {
+        this.running = false; cancelAnimationFrame(this.animId);
+        this.phase = 'winner'; this._spinStartTime = null;
+        if (this._onComplete) { const cb = this._onComplete; this._onComplete = null; cb(); }
+      }, 1500);
+    },
+
+    showWinner(name, prizeName) {
+      const ctx = this.ctx, w = window.innerWidth, h = window.innerHeight;
+      ctx.fillStyle = 'rgba(10, 10, 15, 0.7)'; ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = 'rgba(0, 240, 255, 0.9)';
+      ctx.font = 'bold 32px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      ctx.textAlign = 'center'; ctx.shadowColor = 'rgba(0, 240, 255, 0.6)'; ctx.shadowBlur = 20;
+      ctx.fillText(`🎉 ${prizeName} 中奖者`, w / 2, h * 0.22); ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = 'bold 96px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      ctx.shadowColor = 'rgba(251, 191, 36, 0.8)'; ctx.shadowBlur = 40;
+      ctx.fillText(name, w / 2, h / 2); ctx.shadowBlur = 0;
+    },
+
+    playVoidAnimation(name, onComplete) {
+      const ctx = this.ctx, w = window.innerWidth, h = window.innerHeight;
+      let alpha = 1, strikeX = 0;
+      AudioEngine.playVoid();
+      const anim = () => {
+        ctx.fillStyle = 'rgba(10, 10, 15, 0.7)'; ctx.fillRect(0, 0, w, h);
+        alpha -= 0.02; strikeX += 12;
+        ctx.fillStyle = `rgba(239, 68, 68, ${alpha})`;
+        ctx.font = 'bold 96px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+        ctx.textAlign = 'center'; ctx.fillText(name, w / 2, h / 2);
+        if (strikeX < w * 0.6) {
+          ctx.strokeStyle = `rgba(239, 68, 68, ${alpha + 0.2})`; ctx.lineWidth = 4;
+          ctx.beginPath(); ctx.moveTo(w / 2 - strikeX, h / 2 + 10);
+          ctx.lineTo(w / 2 - strikeX + w * 0.5, h / 2 - 20); ctx.stroke();
+        }
+        if (alpha <= 0) { ctx.clearRect(0, 0, w, h); if (onComplete) onComplete(); return; }
+        requestAnimationFrame(anim);
+      }; anim();
+    },
+
+    clear() {
+      this.running = false;
+      if (this.animId) cancelAnimationFrame(this.animId);
+      this.ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    }
+  };
+
+  // ========== LotteryView ==========
+  const LotteryView = {
+    _currentWinner: null,
+
+    init() {
+      document.getElementById('btnStartDraw').addEventListener('click', () => this.startDraw());
+      document.getElementById('btnConfirm').addEventListener('click', () => this.confirmWinner());
+      document.getElementById('btnVoid').addEventListener('click', () => this.voidWinner());
+    },
+
+    show() {
+      ViewController.switchTo('view-lottery');
+      const state = StateManager.state;
+      if (state.currentPrizeIdx >= state.config.length) { ResultsView.show(); return; }
+      if (state.candidates.length === 0) {
+        alert('候选池已无可用人员，抽奖终止'); ResultsView.show(); return;
+      }
+      this._renderStandby();
+      ParticleEngine.setMode('idle'); DrawEngine.clear();
+    },
+
+    _renderStandby() {
+      const s = StateManager.state, prize = s.config[s.currentPrizeIdx];
+      document.getElementById('lotteryPrizeName').textContent = `🏆 ${prize.name}`;
+      document.getElementById('lotteryProgress').textContent = `已抽出 ${s.currentSlotIdx}/${prize.count} 人`;
+      document.getElementById('standbyNext').textContent = `准备抽取：${prize.name} 第 ${s.currentSlotIdx + 1} 位`;
+      document.getElementById('standbyRemaining').textContent = `剩余候选：${s.candidates.length} 人`;
+      const drawn = s.winners.filter(w => w.prize === prize.name).slice(-prize.count);
+      document.getElementById('standbyDrawn').innerHTML = drawn.map(w => `<span class="drawn-tag">${this._esc(w.name)}</span>`).join('');
+      document.getElementById('lotteryStandby').style.display = 'block';
+      document.getElementById('lotteryActions').style.display = 'none';
+    },
+
+    startDraw() {
+      const candidates = StateManager.state.candidates;
+      if (!candidates.length) { alert('候选池已无可用人员'); return; }
+      document.getElementById('lotteryStandby').style.display = 'none';
+      document.getElementById('lotteryActions').style.display = 'none';
+      ParticleEngine.setMode('accelerate');
+      if (candidates.length === 1) { this._currentWinner = candidates[0]; this._showWinnerScreen(); return; }
+      const idx = Math.floor(Math.random() * candidates.length);
+      this._currentWinner = candidates[idx];
+      DrawEngine.startSpin(candidates, this._currentWinner, () => this._showWinnerScreen());
+    },
+
+    _showWinnerScreen() {
+      ParticleEngine.setMode('burst');
+      DrawEngine.showWinner(this._currentWinner, StateManager.state.config[StateManager.state.currentPrizeIdx].name);
+      AudioEngine.playCelebrate();
+      document.getElementById('lotteryActions').style.display = 'flex';
+    },
+
+    confirmWinner() {
+      const s = StateManager.state, prize = s.config[s.currentPrizeIdx];
+      const idx = s.candidates.indexOf(this._currentWinner);
+      if (idx !== -1) s.candidates.splice(idx, 1);
+      s.winners.push({
+        name: this._currentWinner, prize: prize.name,
+        time: new Date().toLocaleString('zh-CN', { year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false })
+      });
+      s.currentSlotIdx++; StateManager.save();
+      if (s.currentSlotIdx >= prize.count) { s.currentPrizeIdx++; s.currentSlotIdx = 0; StateManager.save(); }
+      DrawEngine.clear(); ParticleEngine.setMode('idle');
+      if (s.currentPrizeIdx >= s.config.length) { ResultsView.show(); return; }
+      this._renderStandby();
+    },
+
+    voidWinner() {
+      const s = StateManager.state;
+      const idx = s.candidates.indexOf(this._currentWinner);
+      if (idx !== -1) s.candidates.splice(idx, 1);
+      StateManager.save();
+      DrawEngine.playVoidAnimation(this._currentWinner, () => {
+        if (!s.candidates.length) {
+          alert('候选池已无可用人员，该奖项剩余名额无法继续抽取');
+          s.currentPrizeIdx++; s.currentSlotIdx = 0; StateManager.save();
+          if (s.currentPrizeIdx >= s.config.length) { ResultsView.show(); return; }
+        }
+        DrawEngine.clear(); ParticleEngine.setMode('idle'); this._renderStandby();
+      });
+    },
+
+    _esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; },
+    hide() { document.getElementById('view-lottery').classList.remove('active'); DrawEngine.clear(); }
+  };
+
+  // ========== ResultsView ==========
+  const ResultsView = {
+    init() {
+      document.getElementById('btnExport').addEventListener('click', () => this.exportCSV());
+      document.getElementById('btnPrint').addEventListener('click', () => window.print());
+      document.getElementById('btnReset').addEventListener('click', () => this.resetAll());
+    },
+
+    show() {
+      ViewController.switchTo('view-results');
+      const winners = StateManager.state.winners, config = StateManager.state.config;
+      const grouped = {};
+      for (const p of config) grouped[p.name] = winners.filter(w => w.prize === p.name);
+      document.getElementById('resultsList').innerHTML = config.map(p => {
+        const list = grouped[p.name] || [];
+        return `<div class="prize-group"><h2>🏆 ${this._esc(p.name)}（${list.length}/${p.count}）</h2>
+          <div class="winner-cards">${list.map(w => `<span class="winner-card">★ ${this._esc(w.name)}</span>`).join('')}
+          ${!list.length ? '<span style="color:var(--text-dim);">暂无中奖者</span>' : ''}</div></div>`;
+      }).join('');
+      document.getElementById('resultsTotal').textContent = `共计抽出：${winners.length} 人`;
+    },
+
+    exportCSV() {
+      const winners = StateManager.state.winners;
+      const csv = '﻿奖项,姓名,中奖时间\n' + winners.map(w => `"${w.prize}","${w.name}","${w.time}"`).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = url; a.download = `lottery-results-${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    },
+
+    resetAll() {
+      if (confirm('确定要重置全部数据吗？此操作不可恢复！')) {
+        if (confirm('再次确认：所有中奖记录和名单将被清除')) { StateManager.reset(); ConfigView.show(); }
+      }
+    },
+
+    _esc(str) { const d = document.createElement('div'); d.textContent = str; return d.innerHTML; },
+    hide() { document.getElementById('view-results').classList.remove('active'); }
+  };
+
+  // ========== App Initialization ==========
+  (function App() {
+    checkRestore();
+    ParticleEngine.init();
+    DrawEngine.init();
+    ConfigView.init();
+    ImportView.init();
+    LotteryView.init();
+    ResultsView.init();
+
+    document.getElementById('btnMute').addEventListener('click', () => {
+      if (!AudioEngine.ctx) AudioEngine.init();
+      AudioEngine.toggleMute();
+    });
+
+    document.addEventListener('click', function initAudio() {
+      if (!AudioEngine.ctx) AudioEngine.init();
+    }, { once: true });
+
+    const state = StateManager.state;
+    if (state.config.length === 0) { ConfigView.show(); }
+    else if (state.candidates.length === 0) { ImportView.show(); }
+    else if (state.currentPrizeIdx < state.config.length) { LotteryView.show(); }
+    else { ResultsView.show(); }
+  })();
   </script>
 </body>
 </html>
