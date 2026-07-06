@@ -1291,9 +1291,31 @@
       this._tick();
     },
 
-    // Called by LotteryView when user clicks stop button
+    // Called by LotteryView when user clicks stop button.
+    // Pre-computes a smooth cubic ease-out curve that lands exactly on targetName.
     triggerStop() {
-      if (this.phase === 'spinning') this.phase = 'decelerating';
+      if (this.phase !== 'spinning') return;
+      // Find where targetName should land
+      var targetIdx = this.names.indexOf(this.targetName);
+      if (targetIdx < 0) targetIdx = 0;
+      var cycleLen = this.names.length * this.CARD_HEIGHT;
+      // Target position is targetIdx * CARD_HEIGHT, in some future cycle
+      var targetInCycle = targetIdx * this.CARD_HEIGHT;
+      // Calculate how far ahead to aim: enough cycles to cover ~2s of deceleration
+      // At speed 18, cubic ease-out covers ~1/3 speed * duration frames ≈ 18/3 * 140 ≈ 840px
+      var estDist = this.speed * 50; // rough decel distance
+      var rawTarget = this.currentOffset + estDist;
+      // Snap to the next occurrence of targetInCycle after rawTarget
+      var cyclesAhead = Math.ceil((rawTarget - targetInCycle) / cycleLen);
+      if (cyclesAhead < 2) cyclesAhead = 2; // at least 2 cycles ahead for visual effect
+      this._decelTarget = cyclesAhead * cycleLen + targetInCycle;
+      this._decelStartOffset = this.currentOffset;
+      this._decelDistance = this._decelTarget - this._decelStartOffset;
+      // Duration: enough frames to cover the distance with cubic ease-out
+      // distance = speed * duration / 3  =>  duration = 3 * distance / speed
+      this._decelFrames = Math.max(60, Math.floor(3 * this._decelDistance / this.speed));
+      this._decelFrame = 0;
+      this.phase = 'decelerating';
     },
 
     _tick() {
@@ -1305,37 +1327,17 @@
         if (Math.floor(this.currentOffset / this.CARD_HEIGHT) !==
             Math.floor((this.currentOffset - this.speed) / this.CARD_HEIGHT)) AudioEngine.playTick();
       } else if (this.phase === 'decelerating') {
-        this.speed *= 0.985; this.currentOffset += this.speed;
-        AudioEngine.playTick();
-        if (this.speed < 2.5) {
-          // Transition to snapping: smoothly land on targetName
-          this.phase = 'snapping';
-          var targetIdx = this.names.indexOf(this.targetName);
-          if (targetIdx < 0) targetIdx = 0;
-          // Calculate the offset that puts targetName at center
-          // Center slot is at offset % CARD_HEIGHT === 0 when cy aligns with card center
-          // We want the card at targetIdx to be at the center position
-          var targetOffset = targetIdx * this.CARD_HEIGHT;
-          // Adjust so we land at the closest multiple of names.length * CARD_HEIGHT
-          var cycleLen = this.names.length * this.CARD_HEIGHT;
-          var base = Math.floor(this.currentOffset / cycleLen) * cycleLen;
-          var candidates = [base + targetOffset, base + targetOffset + cycleLen, base + targetOffset - cycleLen];
-          var best = candidates[0];
-          var bestDist = Math.abs(best - (this.currentOffset + this.speed * 40));
-          for (var c = 1; c < candidates.length; c++) {
-            var d = Math.abs(candidates[c] - (this.currentOffset + this.speed * 40));
-            if (d < bestDist) { bestDist = d; best = candidates[c]; }
-          }
-          this._snapTarget = best;
-          this._snapStartOffset = this.currentOffset;
+        // Cubic ease-out: f(t) = 1 - (1 - t)^3
+        this._decelFrame++;
+        var t = Math.min(this._decelFrame / this._decelFrames, 1.0);
+        var eased = 1 - Math.pow(1 - t, 3);
+        this.currentOffset = this._decelStartOffset + this._decelDistance * eased;
+        if (Math.floor(this.currentOffset / this.CARD_HEIGHT) !==
+            Math.floor((this.currentOffset - (this._decelDistance / this._decelFrames * 3)) / this.CARD_HEIGHT)) {
+          AudioEngine.playTick();
         }
-      } else if (this.phase === 'snapping') {
-        // Smooth ease-out toward target
-        var progress = 0.12;
-        this.currentOffset += (this._snapTarget - this.currentOffset) * progress;
-        AudioEngine.playTick();
-        if (Math.abs(this._snapTarget - this.currentOffset) < 0.5) {
-          this.currentOffset = this._snapTarget;
+        if (t >= 1.0) {
+          this.currentOffset = this._decelTarget;
           this.phase = 'reveal';
           AudioEngine.stopHum();
           this._onReveal();
@@ -1365,7 +1367,7 @@
         ctx.save(); ctx.translate(cx, y); ctx.scale(scale, scale);
         const grad = ctx.createLinearGradient(-cardW/2, 0, cardW/2, 0);
         const isCenter = Math.abs(y - cy) < cardH * 0.2;
-        const isTargetCard = (this.phase === 'snapping' || this.phase === 'reveal') && name === this.targetName;
+        const isTargetCard = this.phase === 'reveal' && name === this.targetName;
         const isWinner = this.phase === 'reveal' && isCenter;
         grad.addColorStop(0, isWinner ? 'rgba(255,217,102,0.25)' : 'rgba(0,194,203,0.06)');
         grad.addColorStop(1, isWinner ? 'rgba(255,217,102,0.25)' : 'rgba(0,136,204,0.06)');
