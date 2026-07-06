@@ -398,6 +398,94 @@
   </div>
 
   <script>
+  // ========== StateManager ==========
+  const KEYS = {
+    config: 'lottery_config',
+    candidates: 'lottery_candidates',
+    original: 'lottery_original',
+    winners: 'lottery_winners',
+    state: 'lottery_state'
+  };
+
+  const StateManager = {
+    state: {
+      config: [],        // [{name: string, count: number}]
+      candidates: [],    // string[]
+      original: [],      // string[]
+      winners: [],       // [{name: string, prize: string, time: string}]
+      currentPrizeIdx: 0,
+      currentSlotIdx: 0
+    },
+
+    save() {
+      localStorage.setItem(KEYS.config, JSON.stringify(this.state.config));
+      localStorage.setItem(KEYS.candidates, JSON.stringify(this.state.candidates));
+      localStorage.setItem(KEYS.original, JSON.stringify(this.state.original));
+      localStorage.setItem(KEYS.winners, JSON.stringify(this.state.winners));
+      localStorage.setItem(KEYS.state, JSON.stringify({
+        currentPrizeIdx: this.state.currentPrizeIdx,
+        currentSlotIdx: this.state.currentSlotIdx
+      }));
+    },
+
+    load() {
+      try {
+        const config = localStorage.getItem(KEYS.config);
+        const candidates = localStorage.getItem(KEYS.candidates);
+        const original = localStorage.getItem(KEYS.original);
+        const winners = localStorage.getItem(KEYS.winners);
+        const st = localStorage.getItem(KEYS.state);
+        if (config) this.state.config = JSON.parse(config);
+        if (candidates) this.state.candidates = JSON.parse(candidates);
+        if (original) this.state.original = JSON.parse(original);
+        if (winners) this.state.winners = JSON.parse(winners);
+        if (st) {
+          const parsed = JSON.parse(st);
+          this.state.currentPrizeIdx = parsed.currentPrizeIdx || 0;
+          this.state.currentSlotIdx = parsed.currentSlotIdx || 0;
+        }
+        return !!(config || candidates);
+      } catch (e) {
+        console.error('StateManager.load failed:', e);
+        return false;
+      }
+    },
+
+    reset() {
+      Object.values(KEYS).forEach(k => localStorage.removeItem(k));
+      this.state = {
+        config: [],
+        candidates: [],
+        original: [],
+        winners: [],
+        currentPrizeIdx: 0,
+        currentSlotIdx: 0
+      };
+    },
+
+    hasSavedData() {
+      return !!localStorage.getItem(KEYS.config);
+    }
+  };
+
+  // ========== Session Restore ==========
+  function checkRestore() {
+    if (StateManager.load()) {
+      const hasWinners = StateManager.state.winners.length > 0;
+      const hasCandidates = StateManager.state.candidates.length > 0;
+      if (hasWinners || hasCandidates) {
+        const action = confirm(
+          '检测到上次的抽奖数据。\n\n' +
+          '点击「确定」继续上次进度\n' +
+          '点击「取消」重新开始'
+        );
+        if (!action) {
+          StateManager.reset();
+        }
+      }
+    }
+  }
+
   // === Papa Parse (内联) ===
   // [Papa Parse minified source will be pasted here — see Task 4]
   </script>
