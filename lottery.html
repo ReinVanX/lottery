@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>医焕安 · 年会抽奖</title>
   <style>
-    /* === CSS Reset & Variables (NEXROVE 海报风格) === */
+    /* === CSS Reset & Variables (NEXTROVE 海报风格) === */
     :root {
       --bg-deep: #001428;
       --bg-mid: #0A3D5C;
@@ -284,7 +284,7 @@
       color: var(--text);
     }
 
-    /* === Lottery View (NEXROVE 年会风格) === */
+    /* === Lottery View (NEXTROVE 年会风格) === */
     #brandHeader {
       position: fixed;
       top: 24px;
@@ -465,6 +465,28 @@
       box-shadow: 0 0 16px rgba(255, 217, 102, 0.15);
     }
 
+    /* Prize Summary Cards */
+    .summary-winner-card {
+      display: flex; align-items: center; gap: 12px;
+      padding: 14px 28px;
+      background: rgba(255, 217, 102, 0.08);
+      border: 1px solid rgba(255, 217, 102, 0.25);
+      border-radius: 14px;
+      animation: summaryFadeIn 0.5s ease both;
+    }
+    .summary-num {
+      font-size: 18px; color: rgba(255, 217, 102, 0.5); font-weight: 700;
+      min-width: 32px;
+    }
+    .summary-name {
+      font-size: 24px; color: #FFD966; font-weight: 700;
+      text-shadow: 0 0 12px rgba(255, 217, 102, 0.4);
+    }
+    @keyframes summaryFadeIn {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
     /* === Print Styles === */
     @media (prefers-reduced-motion: reduce) {
       .btn, .bracket-frame, #bgDecor::before { transition: none; animation: none; }
@@ -508,7 +530,7 @@
   <!-- View 1: Config -->
   <div id="view-config" class="view active">
     <div class="panel">
-      <h1 class="title"><span class="title-accent">NEXROVE</span> · 年会抽奖</h1>
+      <h1 class="title"><span class="title-accent">NEXTROVE</span> · 年会抽奖</h1>
       <p class="brand-slogan">「智联全球 警戒未来」</p>
       <p class="subtitle">第一步：设置奖项</p>
       <table id="configTable">
@@ -528,7 +550,7 @@
   <!-- View 2: Import -->
   <div id="view-import" class="view">
     <div class="panel">
-      <h1 class="title"><span class="title-accent">NEXROVE</span> · 导入名单</h1>
+      <h1 class="title"><span class="title-accent">NEXTROVE</span> · 导入名单</h1>
       <p class="brand-slogan">「智联全球 警戒未来」</p>
       <p class="subtitle">第二步：上传签到名单</p>
       <div id="dropZone">
@@ -552,7 +574,7 @@
   <!-- View 3: Lottery -->
   <div id="view-lottery" class="view">
     <div id="brandHeader">
-      <div class="brand-logo">NEXROVE</div>
+      <div class="brand-logo">NEXTROVE</div>
       <div class="brand-event">医焕安 全球药物警戒年会</div>
       <div class="brand-slogan-inline">「智联全球 警戒未来」</div>
     </div>
@@ -571,16 +593,27 @@
         <div id="standbyDrawn" style="margin-top:24px;"></div>
       </div>
     </div>
+    <div id="lotteryStopArea" style="display:none;position:fixed;bottom:50px;left:0;width:100%;z-index:20;justify-content:center;">
+      <button id="btnStopDraw" class="btn" style="background:rgba(239,68,68,0.15);border-color:#ef4444;color:#ef4444;font-size:24px;padding:18px 56px;">🛑 停 止</button>
+    </div>
     <div id="lotteryActions" style="display:none;">
       <button id="btnConfirm" class="btn gold">确认中奖</button>
       <button id="btnVoid" class="btn danger">作废重抽</button>
+    </div>
+    <!-- Prize Summary Overlay -->
+    <div id="prizeSummary" style="display:none;position:fixed;inset:0;z-index:30;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,13,26,0.92);">
+      <div class="panel" style="text-align:center;min-width:500px;">
+        <h2 id="summaryPrizeName" style="color:#FFD966;font-size:30px;margin-bottom:24px;text-shadow:0 0 20px rgba(255,217,102,0.5);"></h2>
+        <div id="summaryWinnerList" style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center;margin-bottom:28px;"></div>
+        <button id="btnNextPrize" class="btn primary" style="font-size:20px;"></button>
+      </div>
     </div>
   </div>
 
   <!-- View 4: Results -->
   <div id="view-results" class="view">
     <div class="panel">
-      <h1 class="title"><span class="title-accent">NEXROVE</span> · 中奖结果汇总</h1>
+      <h1 class="title"><span class="title-accent">NEXTROVE</span> · 中奖结果汇总</h1>
       <p class="brand-slogan">「智联全球 警戒未来」</p>
       <div id="resultsList"></div>
       <p id="resultsTotal" style="text-align:center;color:var(--teal-bright);margin:20px 0;"></p>
@@ -1254,9 +1287,13 @@
       this.speed = 18; this.currentOffset = 0;
       this.phase = 'spinning'; this.flashAlpha = 0;
       this.running = true; this._onComplete = onComplete;
-      this._spinStartTime = performance.now();
       AudioEngine.startHum();
       this._tick();
+    },
+
+    // Called by LotteryView when user clicks stop button
+    triggerStop() {
+      if (this.phase === 'spinning') this.phase = 'decelerating';
     },
 
     _tick() {
@@ -1267,12 +1304,18 @@
         this.currentOffset += this.speed;
         if (Math.floor(this.currentOffset / this.CARD_HEIGHT) !==
             Math.floor((this.currentOffset - this.speed) / this.CARD_HEIGHT)) AudioEngine.playTick();
-        if (performance.now() - this._spinStartTime > 2500) this.phase = 'decelerating';
       } else if (this.phase === 'decelerating') {
         this.speed *= 0.985; this.currentOffset += this.speed;
         AudioEngine.playTick();
         if (this.speed < 0.3) {
-          this.phase = 'reveal'; AudioEngine.stopHum(); this._onReveal();
+          this.phase = 'reveal';
+          const winnerIdx = this.names.indexOf(this.targetName);
+          if (winnerIdx >= 0) {
+            this.currentOffset = winnerIdx * this.CARD_HEIGHT;
+          }
+          this.speed = 0;
+          AudioEngine.stopHum();
+          this._onReveal();
         }
       }
       this._drawSlots(ctx, w, h);
@@ -1284,19 +1327,22 @@
       this.animId = requestAnimationFrame(() => this._tick());
     },
 
+
     _drawSlots(ctx, w, h) {
       const cx = w / 2, cy = h / 2, offset = this.currentOffset, cardH = this.CARD_HEIGHT;
       const windowH = cardH * this.VISIBLE_SLOTS, cardW = Math.min(w * 0.6, 600);
       for (let i = -5; i < this.VISIBLE_SLOTS + 5; i++) {
-        const ni = Math.floor((offset + i * cardH) / cardH) % this.names.length;
+        const rawIdx = Math.floor((offset + i * cardH) / cardH);
+        const ni = ((rawIdx % this.names.length) + this.names.length) % this.names.length;
         const y = cy + i * cardH - (offset % cardH);
-        const name = this.names[Math.abs(ni)] || '';
+        const name = this.names[ni] || '';
         const dist = Math.abs(y - cy) / (windowH / 2);
         const alpha = Math.max(0.15, 1 - dist * 0.85);
         const scale = Math.max(0.6, 1 - dist * 0.4);
         ctx.save(); ctx.translate(cx, y); ctx.scale(scale, scale);
         const grad = ctx.createLinearGradient(-cardW/2, 0, cardW/2, 0);
-        const isWinner = this.phase === 'reveal' && name === this.targetName;
+        const isCenter = Math.abs(y - cy) < cardH * 0.2;
+        const isWinner = this.phase === 'reveal' && isCenter;
         grad.addColorStop(0, isWinner ? 'rgba(255,217,102,0.25)' : 'rgba(0,194,203,0.06)');
         grad.addColorStop(1, isWinner ? 'rgba(255,217,102,0.25)' : 'rgba(0,136,204,0.06)');
         ctx.fillStyle = grad; ctx.fillRect(-cardW/2, -cardH/2, cardW, cardH);
@@ -1323,22 +1369,76 @@
       ParticleEngine.burst(window.innerWidth / 2, window.innerHeight / 2, 80);
       setTimeout(() => {
         this.running = false; cancelAnimationFrame(this.animId);
-        this.phase = 'winner'; this._spinStartTime = null;
+        this.phase = 'winner';
         if (this._onComplete) { const cb = this._onComplete; this._onComplete = null; cb(); }
       }, 1500);
     },
 
     showWinner(name, prizeName) {
-      const ctx = this.ctx, w = window.innerWidth, h = window.innerHeight;
-      ctx.fillStyle = 'rgba(0, 20, 40, 0.7)'; ctx.fillRect(0, 0, w, h);
+      var self = this;
+      this._winnerName = name;
+      this._winnerPrize = prizeName;
+      this._winnerStartTime = performance.now();
+      this._drawWinnerFrame();
+    },
+
+    _drawWinnerFrame() {
+      var ctx = this.ctx, w = window.innerWidth, h = window.innerHeight;
+      var elapsed = (performance.now() - this._winnerStartTime) / 1000;
+      ctx.fillStyle = 'rgba(0, 20, 40, 0.75)'; ctx.fillRect(0, 0, w, h);
+
+      // Prize label
       ctx.fillStyle = 'rgba(0, 229, 238, 0.9)';
       ctx.font = 'bold 32px "PingFang SC", "Microsoft YaHei", -apple-system, sans-serif';
       ctx.textAlign = 'center'; ctx.shadowColor = 'rgba(0, 229, 238, 0.6)'; ctx.shadowBlur = 20;
-      ctx.fillText(`${prizeName} 中奖者`, w / 2, h * 0.22); ctx.shadowBlur = 0;
-      ctx.fillStyle = '#FFD966';
+      ctx.fillText(this._winnerPrize + ' 中奖者', w / 2, h * 0.22); ctx.shadowBlur = 0;
+
+      // Winner name with flowing light sweep
+      var nameY = h / 2;
       ctx.font = 'bold 96px "PingFang SC", "Microsoft YaHei", -apple-system, sans-serif';
-      ctx.shadowColor = 'rgba(255, 217, 102, 0.8)'; ctx.shadowBlur = 40;
-      ctx.fillText(name, w / 2, h / 2); ctx.shadowBlur = 0;
+      ctx.textAlign = 'center';
+
+      // Base gold fill
+      ctx.fillStyle = '#FFD966';
+      ctx.shadowColor = 'rgba(255, 217, 102, 0.6)'; ctx.shadowBlur = 30;
+      ctx.fillText(this._winnerName, w / 2, nameY);
+
+      // Flowing light sweep: a bright gradient that moves across the text
+      var sweepX = w / 2 + Math.sin(elapsed * 2.5) * w * 0.55;
+      var sweepGrad = ctx.createLinearGradient(sweepX - 120, 0, sweepX + 120, 0);
+      sweepGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+      sweepGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.7)');
+      sweepGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+      ctx.fillStyle = sweepGrad;
+      ctx.shadowColor = 'rgba(255, 255, 255, 0.9)'; ctx.shadowBlur = 18;
+      ctx.fillText(this._winnerName, w / 2, nameY);
+      ctx.shadowBlur = 0;
+
+      // Sparkle particles around the name
+      var sparkleCount = 12;
+      for (var i = 0; i < sparkleCount; i++) {
+        var angle = (Math.PI * 2 * i / sparkleCount) + elapsed * 0.8;
+        var radius = 140 + Math.sin(elapsed * 3 + i) * 30;
+        var sx = w / 2 + Math.cos(angle) * radius;
+        var sy = nameY + Math.sin(angle) * radius * 0.4;
+        var sparkleAlpha = 0.3 + Math.sin(elapsed * 5 + i * 2) * 0.5;
+        if (sparkleAlpha < 0) sparkleAlpha = 0;
+        ctx.beginPath(); ctx.arc(sx, sy, 2 + Math.random() * 2, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 255, 220, ' + sparkleAlpha + ')';
+        ctx.fill();
+        ctx.beginPath(); ctx.arc(sx, sy, 6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 217, 102, ' + (sparkleAlpha * 0.35) + ')';
+        ctx.fill();
+      }
+
+      // Continue animation
+      var self = this;
+      this._winnerAnimId = requestAnimationFrame(function() { self._drawWinnerFrame(); });
+    },
+
+    stopWinnerAnimation() {
+      if (this._winnerAnimId) { cancelAnimationFrame(this._winnerAnimId); this._winnerAnimId = null; }
     },
 
     playVoidAnimation(name, onComplete) {
@@ -1373,9 +1473,12 @@
     _currentWinner: null,
 
     init() {
-      document.getElementById('btnStartDraw').addEventListener('click', () => this.startDraw());
-      document.getElementById('btnConfirm').addEventListener('click', () => this.confirmWinner());
-      document.getElementById('btnVoid').addEventListener('click', () => this.voidWinner());
+      var self = this;
+      document.getElementById('btnStartDraw').addEventListener('click', function() { self.startDraw(); });
+      document.getElementById('btnStopDraw').addEventListener('click', function() { self._onStopClick(); });
+      document.getElementById('btnConfirm').addEventListener('click', function() { self.confirmWinner(); });
+      document.getElementById('btnVoid').addEventListener('click', function() { self.voidWinner(); });
+      document.getElementById('btnNextPrize').addEventListener('click', function() { self._onNextPrize(); });
     },
 
     show() {
@@ -1402,46 +1505,85 @@
     },
 
     startDraw() {
-      const candidates = StateManager.state.candidates;
+      var candidates = StateManager.state.candidates;
       if (!candidates.length) { alert('候选池已无可用人员'); return; }
       document.getElementById('lotteryStandby').style.display = 'none';
       document.getElementById('lotteryActions').style.display = 'none';
+      // Show stop button
+      document.getElementById('lotteryStopArea').style.display = 'flex';
       ParticleEngine.setMode('accelerate');
-      if (candidates.length === 1) { this._currentWinner = candidates[0]; this._showWinnerScreen(); return; }
-      const idx = Math.floor(Math.random() * candidates.length);
+      if (candidates.length === 1) { this._currentWinner = candidates[0]; this._onStopClick(); return; }
+      var idx = Math.floor(Math.random() * candidates.length);
       this._currentWinner = candidates[idx];
-      DrawEngine.startSpin(candidates, this._currentWinner, () => this._showWinnerScreen());
+      var self = this;
+      DrawEngine.startSpin(candidates, this._currentWinner, function() { self._showWinnerScreen(); });
+    },
+
+    _onStopClick() {
+      document.getElementById('lotteryStopArea').style.display = 'none';
+      DrawEngine.triggerStop();
     },
 
     _showWinnerScreen() {
       ParticleEngine.setMode('burst');
+      DrawEngine.stopWinnerAnimation();
       DrawEngine.showWinner(this._currentWinner, StateManager.state.config[StateManager.state.currentPrizeIdx].name);
       AudioEngine.playCelebrate();
       document.getElementById('lotteryActions').style.display = 'flex';
     },
 
     confirmWinner() {
-      const s = StateManager.state, prize = s.config[s.currentPrizeIdx];
-      const idx = s.candidates.indexOf(this._currentWinner);
+      var s = StateManager.state, prize = s.config[s.currentPrizeIdx];
+      var idx = s.candidates.indexOf(this._currentWinner);
       if (idx !== -1) s.candidates.splice(idx, 1);
       s.winners.push({
         name: this._currentWinner, prize: prize.name,
         time: new Date().toLocaleString('zh-CN', { year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false })
       });
       s.currentSlotIdx++; StateManager.save();
-      if (s.currentSlotIdx >= prize.count) { s.currentPrizeIdx++; s.currentSlotIdx = 0; StateManager.save(); }
-      AudioEngine.stopWin(); DrawEngine.clear(); ParticleEngine.setMode('idle');
+      AudioEngine.stopWin(); DrawEngine.stopWinnerAnimation(); DrawEngine.clear(); ParticleEngine.setMode('idle');
+      if (s.currentSlotIdx >= prize.count) {
+        // Prize complete - show prize summary before next
+        this._showPrizeSummary(prize);
+      } else {
+        this._renderStandby();
+      }
+    },
+
+    _showPrizeSummary(prize) {
+      var s = StateManager.state;
+      var winners = s.winners.filter(function(w) { return w.prize === prize.name; });
+      document.getElementById('lotteryPrizeName').textContent = '';
+      document.getElementById('lotteryProgress').textContent = '';
+      document.getElementById('lotteryStandby').style.display = 'none';
+      document.getElementById('lotteryActions').style.display = 'none';
+      document.getElementById('lotteryStopArea').style.display = 'none';
+      var summary = document.getElementById('prizeSummary');
+      document.getElementById('summaryPrizeName').textContent = prize.name + ' 中奖名单';
+      document.getElementById('summaryWinnerList').innerHTML = winners.map(function(w, i) {
+        return '<div class="summary-winner-card"><span class="summary-num">#' + (i + 1) + '</span><span class="summary-name">' + LotteryView._esc(w.name) + '</span></div>';
+      }).join('');
+      document.getElementById('btnNextPrize').textContent = s.currentPrizeIdx + 1 < s.config.length
+        ? '进入下一个奖项 →'
+        : '查看全部结果 →';
+      summary.style.display = 'flex';
+    },
+
+    _onNextPrize() {
+      var s = StateManager.state;
+      s.currentPrizeIdx++; s.currentSlotIdx = 0; StateManager.save();
+      document.getElementById('prizeSummary').style.display = 'none';
       if (s.currentPrizeIdx >= s.config.length) { ResultsView.show(); return; }
       this._renderStandby();
     },
 
     voidWinner() {
-      const s = StateManager.state;
-      const idx = s.candidates.indexOf(this._currentWinner);
+      var s = StateManager.state;
+      var idx = s.candidates.indexOf(this._currentWinner);
       if (idx !== -1) s.candidates.splice(idx, 1);
       StateManager.save();
-      AudioEngine.stopWin();
-      DrawEngine.playVoidAnimation(this._currentWinner, () => {
+      AudioEngine.stopWin(); DrawEngine.stopWinnerAnimation();
+      DrawEngine.playVoidAnimation(this._currentWinner, function() {
         if (!s.candidates.length) {
           alert('候选池已无可用人员，该奖项剩余名额无法继续抽取');
           s.currentPrizeIdx++; s.currentSlotIdx = 0; StateManager.save();
