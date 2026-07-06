@@ -486,6 +486,101 @@
     }
   }
 
+  // ========== ConfigView ==========
+  const ConfigView = {
+    init() {
+      document.getElementById('btnAddPrize').addEventListener('click', () => this.addRow());
+      document.getElementById('btnConfigNext').addEventListener('click', () => this.saveAndNext());
+      this.render();
+    },
+
+    render() {
+      const tbody = document.getElementById('configBody');
+      const config = StateManager.state.config;
+      tbody.innerHTML = config.map((prize, i) => `
+        <tr>
+          <td><input type="text" name="prizeName" value="${this.esc(prize.name)}"
+                     data-index="${i}" placeholder="奖项名称"></td>
+          <td><input type="number" name="prizeCount" value="${prize.count}"
+                     data-index="${i}" min="1" placeholder="人数"></td>
+          <td><button class="btn-del" data-index="${i}" title="删除">✕</button></td>
+        </tr>
+      `).join('');
+
+      // Bind events
+      tbody.querySelectorAll('input[name="prizeName"]').forEach(inp => {
+        inp.addEventListener('input', (e) => {
+          const idx = parseInt(e.target.dataset.index);
+          StateManager.state.config[idx].name = e.target.value;
+          this.updateSummary();
+          StateManager.save();
+        });
+      });
+      tbody.querySelectorAll('input[name="prizeCount"]').forEach(inp => {
+        inp.addEventListener('input', (e) => {
+          const idx = parseInt(e.target.dataset.index);
+          const val = Math.max(1, parseInt(e.target.value) || 1);
+          e.target.value = val;
+          StateManager.state.config[idx].count = val;
+          this.updateSummary();
+          StateManager.save();
+        });
+      });
+      tbody.querySelectorAll('.btn-del').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const idx = parseInt(e.target.dataset.index);
+          StateManager.state.config.splice(idx, 1);
+          StateManager.save();
+          this.render();
+        });
+      });
+
+      this.updateSummary();
+    },
+
+    addRow() {
+      StateManager.state.config.push({ name: '', count: 1 });
+      StateManager.save();
+      this.render();
+      // Focus the new row's name input
+      const inputs = document.querySelectorAll('#configBody input[name="prizeName"]');
+      const last = inputs[inputs.length - 1];
+      if (last) last.focus();
+    },
+
+    saveAndNext() {
+      // Validate
+      const config = StateManager.state.config;
+      if (config.length === 0) {
+        alert('请至少添加一个奖项');
+        return;
+      }
+      for (let i = 0; i < config.length; i++) {
+        if (!config[i].name.trim()) {
+          alert(`第 ${i + 1} 个奖项名称为空，请填写`);
+          return;
+        }
+      }
+      StateManager.save();
+      ImportView.show();
+    },
+
+    updateSummary() {
+      const total = StateManager.state.config.reduce((sum, p) => sum + p.count, 0);
+      document.getElementById('configSummary').textContent =
+        total > 0 ? `总计将抽出 ${total} 人` : '请添加奖项';
+    },
+
+    esc(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    },
+
+    show() { ViewController.switchTo('view-config'); this.render(); },
+    hide() { document.getElementById('view-config').classList.remove('active'); }
+  };
+
   // === Papa Parse (内联) ===
   // [Papa Parse minified source will be pasted here — see Task 4]
   </script>
