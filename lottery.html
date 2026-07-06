@@ -1609,13 +1609,14 @@
       if (idx !== -1) s.candidates.splice(idx, 1);
       StateManager.save();
       AudioEngine.stopWin(); DrawEngine.stopWinnerAnimation();
+      var self = this;
       DrawEngine.playVoidAnimation(this._currentWinner, function() {
         if (!s.candidates.length) {
           alert('候选池已无可用人员，该奖项剩余名额无法继续抽取');
           s.currentPrizeIdx++; s.currentSlotIdx = 0; StateManager.save();
           if (s.currentPrizeIdx >= s.config.length) { ResultsView.show(); return; }
         }
-        DrawEngine.clear(); ParticleEngine.setMode('idle'); this._renderStandby();
+        DrawEngine.clear(); ParticleEngine.setMode('idle'); self._renderStandby();
       });
     },
 
