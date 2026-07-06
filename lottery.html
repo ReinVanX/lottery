@@ -881,7 +881,7 @@
   // ========== AudioEngine ==========
   const AudioEngine = {
     ctx: null, muted: false, buffers: {}, humSource: null, humGain: null,
-    humNodes: null,
+    winSource: null, winGain: null, humNodes: null,
 
     init() {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -891,7 +891,7 @@
     },
 
     async _loadSounds() {
-      for (const name of ['draw', 'win']) {
+      for (const name of ['draw', 'bingo', 'win']) {
         try {
           const resp = await fetch('sounds/' + name + '.mp3');
           if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -988,10 +988,10 @@
       this.humNodes = null;
     },
 
-    // ---- playWin: win.mp3 → synthesis fallback ----
-    _playWin() {
-      if (this._playBuffer('win', 0.85)) return;
-      // Fallback: noise burst + bright ding sweep + bass thud
+    // ---- _playBingo: bingo.mp3 one-shot → synthesis fallback ----
+    _playBingo() {
+      if (this._playBuffer('bingo', 0.85)) return;
+      // Fallback: bright ding sweep + bass thud
       const ctx = this.ctx, now = ctx.currentTime;
       _playNoiseHit(ctx, 0.18, 0.15, 900, 0.8, this._dest());
       [0, 5].forEach(det => {
@@ -1004,24 +1004,48 @@
         o.connect(g); g.connect(this._dest());
         o.start(now); o.stop(now + 0.5);
       });
-      const bass = ctx.createOscillator(), bG = ctx.createGain();
-      bass.type = 'triangle';
-      bass.frequency.setValueAtTime(55, now + 0.05);
-      bass.frequency.exponentialRampToValueAtTime(22, now + 0.7);
-      bG.gain.setValueAtTime(0.25, now + 0.05);
-      bG.gain.exponentialRampToValueAtTime(0.001, now + 0.75);
-      bass.connect(bG); bG.connect(this._dest());
-      bass.start(now + 0.05); bass.stop(now + 0.8);
     },
 
     playReveal() {
       if (this.muted) return; this._ensure();
-      this._playWin();
+      this._playBingo();
     },
 
+    // ---- playCelebrate: win.mp3 loop → synthesis fallback ----
     playCelebrate() {
       if (this.muted) return; this._ensure();
-      this._playWin();
+      if (this.buffers['win']) {
+        this.winSource = this.ctx.createBufferSource();
+        this.winSource.buffer = this.buffers['win'];
+        this.winSource.loop = true;
+        this.winGain = this.ctx.createGain();
+        this.winGain.gain.value = 0.65;
+        this.winSource.connect(this.winGain);
+        this.winGain.connect(this.ctx.destination);
+        this.winSource.start();
+        return;
+      }
+      // Fallback: one-shot noise burst + bass thud (no looping for synthesis)
+      const ctx = this.ctx, now = ctx.currentTime;
+      _playNoiseHit(ctx, 0.2, 0.18, 800, 0.7, this._dest());
+      [0, 7].forEach(det => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.type = 'square'; o.frequency.setValueAtTime(523, now); o.detune.value = det;
+        g.gain.setValueAtTime(0.06, now);
+        g.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+        o.connect(g); g.connect(this._dest());
+        o.start(now); o.stop(now + 0.65);
+      });
+    },
+
+    // ---- stopWin: stop win.mp3 loop ----
+    stopWin() {
+      if (this.winSource) {
+        const now = this.ctx.currentTime;
+        this.winGain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+        this.winSource.stop(now + 0.3);
+        this.winSource = null; this.winGain = null;
+      }
     },
 
     // ---- playVoid: synthesis only (no MP3 needed for edge case) ----
@@ -1246,7 +1270,7 @@
       });
       s.currentSlotIdx++; StateManager.save();
       if (s.currentSlotIdx >= prize.count) { s.currentPrizeIdx++; s.currentSlotIdx = 0; StateManager.save(); }
-      DrawEngine.clear(); ParticleEngine.setMode('idle');
+      AudioEngine.stopWin(); DrawEngine.clear(); ParticleEngine.setMode('idle');
       if (s.currentPrizeIdx >= s.config.length) { ResultsView.show(); return; }
       this._renderStandby();
     },
@@ -1256,6 +1280,7 @@
       const idx = s.candidates.indexOf(this._currentWinner);
       if (idx !== -1) s.candidates.splice(idx, 1);
       StateManager.save();
+      AudioEngine.stopWin();
       DrawEngine.playVoidAnimation(this._currentWinner, () => {
         if (!s.candidates.length) {
           alert('候选池已无可用人员，该奖项剩余名额无法继续抽取');
