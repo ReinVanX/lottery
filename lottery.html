@@ -1307,13 +1307,36 @@
       } else if (this.phase === 'decelerating') {
         this.speed *= 0.985; this.currentOffset += this.speed;
         AudioEngine.playTick();
-        if (this.speed < 0.3) {
-          this.phase = 'reveal';
-          const winnerIdx = this.names.indexOf(this.targetName);
-          if (winnerIdx >= 0) {
-            this.currentOffset = winnerIdx * this.CARD_HEIGHT;
+        if (this.speed < 2.5) {
+          // Transition to snapping: smoothly land on targetName
+          this.phase = 'snapping';
+          var targetIdx = this.names.indexOf(this.targetName);
+          if (targetIdx < 0) targetIdx = 0;
+          // Calculate the offset that puts targetName at center
+          // Center slot is at offset % CARD_HEIGHT === 0 when cy aligns with card center
+          // We want the card at targetIdx to be at the center position
+          var targetOffset = targetIdx * this.CARD_HEIGHT;
+          // Adjust so we land at the closest multiple of names.length * CARD_HEIGHT
+          var cycleLen = this.names.length * this.CARD_HEIGHT;
+          var base = Math.floor(this.currentOffset / cycleLen) * cycleLen;
+          var candidates = [base + targetOffset, base + targetOffset + cycleLen, base + targetOffset - cycleLen];
+          var best = candidates[0];
+          var bestDist = Math.abs(best - (this.currentOffset + this.speed * 40));
+          for (var c = 1; c < candidates.length; c++) {
+            var d = Math.abs(candidates[c] - (this.currentOffset + this.speed * 40));
+            if (d < bestDist) { bestDist = d; best = candidates[c]; }
           }
-          this.speed = 0;
+          this._snapTarget = best;
+          this._snapStartOffset = this.currentOffset;
+        }
+      } else if (this.phase === 'snapping') {
+        // Smooth ease-out toward target
+        var progress = 0.12;
+        this.currentOffset += (this._snapTarget - this.currentOffset) * progress;
+        AudioEngine.playTick();
+        if (Math.abs(this._snapTarget - this.currentOffset) < 0.5) {
+          this.currentOffset = this._snapTarget;
+          this.phase = 'reveal';
           AudioEngine.stopHum();
           this._onReveal();
         }
@@ -1342,6 +1365,7 @@
         ctx.save(); ctx.translate(cx, y); ctx.scale(scale, scale);
         const grad = ctx.createLinearGradient(-cardW/2, 0, cardW/2, 0);
         const isCenter = Math.abs(y - cy) < cardH * 0.2;
+        const isTargetCard = (this.phase === 'snapping' || this.phase === 'reveal') && name === this.targetName;
         const isWinner = this.phase === 'reveal' && isCenter;
         grad.addColorStop(0, isWinner ? 'rgba(255,217,102,0.25)' : 'rgba(0,194,203,0.06)');
         grad.addColorStop(1, isWinner ? 'rgba(255,217,102,0.25)' : 'rgba(0,136,204,0.06)');
@@ -1512,7 +1536,7 @@
       // Show stop button
       document.getElementById('lotteryStopArea').style.display = 'flex';
       ParticleEngine.setMode('accelerate');
-      if (candidates.length === 1) { this._currentWinner = candidates[0]; this._onStopClick(); return; }
+      if (candidates.length === 1) { this._currentWinner = candidates[0]; this._showWinnerScreen(); return; }
       var idx = Math.floor(Math.random() * candidates.length);
       this._currentWinner = candidates[idx];
       var self = this;
