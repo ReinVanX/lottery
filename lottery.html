@@ -891,7 +891,8 @@
 
   // ========== AudioEngine ==========
   const AudioEngine = {
-    ctx: null, muted: false, humNodes: null, reverb: null,
+    ctx: null, muted: false, buffers: {}, humSource: null, humGain: null,
+    humNodes: null, reverb: null,
 
     init() {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -899,6 +900,37 @@
       this.reverb.output.connect(this.ctx.destination);
       const saved = localStorage.getItem('lottery_muted');
       if (saved === 'true') this.setMuted(true);
+      // Start async MP3 preload (non-blocking)
+      this._loadSounds();
+    },
+
+    async _loadSounds() {
+      const names = ['tick', 'hum', 'reveal', 'celebrate', 'void'];
+      for (const name of names) {
+        try {
+          const resp = await fetch('sounds/' + name + '.mp3');
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          const arrayBuf = await resp.arrayBuffer();
+          const audioBuf = await this.ctx.decodeAudioData(arrayBuf);
+          this.buffers[name] = audioBuf;
+          console.log('Sound loaded: ' + name + '.mp3');
+        } catch (e) {
+          console.warn('Sound "' + name + '.mp3" not loaded, using fallback:', e.message);
+          this.buffers[name] = null;
+        }
+      }
+    },
+
+    _playBuffer(name, volume) {
+      const buf = this.buffers[name];
+      if (!buf) return false;
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      const gain = this.ctx.createGain();
+      gain.gain.value = (volume !== undefined) ? volume : 0.8;
+      src.connect(gain); gain.connect(this.ctx.destination);
+      src.start();
+      return true;
     },
 
     setMuted(m) {
@@ -916,13 +948,13 @@
 
     _dest() { return this.ctx.destination; },
 
-    // Tick: crisp noise click + tonal ping — like a roulette ball bounce
+    // ---- playTick: MP3 → synthesis fallback ----
     playTick() {
       if (this.muted) return; this._ensure();
+      if (this._playBuffer('tick', 0.7)) return;
+      // Fallback: noise click + tonal ping
       const ctx = this.ctx, now = ctx.currentTime;
-      // Noise hit — short and bright
       _playNoiseHit(ctx, 0.025, 0.09, 2400, 1.2, this._dest());
-      // Tonal ping layered with the noise
       const osc = ctx.createOscillator(), g = ctx.createGain();
       osc.type = 'sine'; osc.frequency.setValueAtTime(1400, now);
       osc.frequency.exponentialRampToValueAtTime(900, now + 0.02);
@@ -932,9 +964,21 @@
       osc.start(now); osc.stop(now + 0.03);
     },
 
-    // Hum: 3 detuned sawtooths + sub-bass sine — like an engine idle with tension
+    // ---- startHum: MP3 loop → synthesis fallback ----
     startHum() {
       if (this.muted) return; this._ensure();
+      if (this.buffers['hum']) {
+        this.humSource = this.ctx.createBufferSource();
+        this.humSource.buffer = this.buffers['hum'];
+        this.humSource.loop = true;
+        this.humGain = this.ctx.createGain();
+        this.humGain.gain.value = 0.55;
+        this.humSource.connect(this.humGain);
+        this.humGain.connect(this.ctx.destination);
+        this.humSource.start();
+        return;
+      }
+      // Fallback: 3 detuned sawtooths + sub-bass
       const ctx = this.ctx, now = ctx.currentTime;
       const masterGain = ctx.createGain();
       masterGain.gain.value = 0.045;
@@ -942,26 +986,26 @@
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass'; lp.frequency.value = 350; lp.Q.value = 0.5;
       lp.connect(masterGain);
-
-      const detunes = [-5, 0, 5];
-      const oscs = detunes.map(d => {
+      const oscs = [-5, 0, 5].map(d => {
         const o = ctx.createOscillator();
-        o.type = 'sawtooth';
-        o.frequency.value = 55;
-        o.detune.value = d;
-        o.connect(lp);
-        o.start(now);
-        return o;
+        o.type = 'sawtooth'; o.frequency.value = 55; o.detune.value = d;
+        o.connect(lp); o.start(now); return o;
       });
-      // Sub-bass layer
       const sub = ctx.createOscillator(), subG = ctx.createGain();
       sub.type = 'sine'; sub.frequency.value = 35; subG.gain.value = 0.06;
       sub.connect(subG); subG.connect(masterGain); sub.start(now);
-
       this.humNodes = { oscs, sub, subG, lp, masterGain };
     },
 
+    // ---- stopHum: stop MP3 or synthesis hum ----
     stopHum() {
+      if (this.humSource) {
+        const now = this.ctx.currentTime;
+        this.humGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+        this.humSource.stop(now + 0.35);
+        this.humSource = null; this.humGain = null;
+        return;
+      }
       if (!this.humNodes) return;
       const now = this.ctx.currentTime;
       this.humNodes.masterGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
@@ -970,17 +1014,16 @@
       this.humNodes = null;
     },
 
-    // Reveal: noise burst "clang" + bright ding sweep + deep bass thud — dramatic impact
+    // ---- playReveal: MP3 → synthesis fallback ----
     playReveal() {
       if (this.muted) return; this._ensure();
+      if (this._playBuffer('reveal', 0.85)) return;
+      // Fallback: noise burst + ding sweep + bass thud
       const ctx = this.ctx, now = ctx.currentTime;
-      // Layer 1: noise burst — the "clang" attack
       _playNoiseHit(ctx, 0.18, 0.15, 900, 0.8, this._dest());
-      // Layer 2: bright detuned ding sweep
       [0, 5].forEach(det => {
         const o = ctx.createOscillator(), g = ctx.createGain();
-        o.type = 'sine';
-        o.frequency.setValueAtTime(350, now);
+        o.type = 'sine'; o.frequency.setValueAtTime(350, now);
         o.frequency.exponentialRampToValueAtTime(1600, now + 0.25);
         o.detune.value = det;
         g.gain.setValueAtTime(0.11, now);
@@ -988,7 +1031,6 @@
         o.connect(g); g.connect(this._dest());
         o.start(now); o.stop(now + 0.5);
       });
-      // Layer 3: deep bass thud
       const bass = ctx.createOscillator(), bG = ctx.createGain();
       bass.type = 'triangle';
       bass.frequency.setValueAtTime(55, now + 0.05);
@@ -999,22 +1041,21 @@
       bass.start(now + 0.05); bass.stop(now + 0.8);
     },
 
-    // Celebrate: rich arpeggio with detuned squares + reverb tail + shimmer — triumphant fanfare
+    // ---- playCelebrate: MP3 → synthesis fallback ----
     playCelebrate() {
       if (this.muted) return; this._ensure();
+      if (this._playBuffer('celebrate', 0.85)) return;
+      // Fallback: detuned squares + reverb tail + shimmer
       const ctx = this.ctx, now = ctx.currentTime;
-      const notes = [523, 659, 784, 1047]; // C5 E5 G5 C6
-      notes.forEach((freq, i) => {
+      [523, 659, 784, 1047].forEach((freq, i) => {
         const t = now + i * 0.12;
         [-6, 0, 6].forEach(det => {
           const o = ctx.createOscillator();
           o.type = 'square'; o.frequency.value = freq; o.detune.value = det;
-          // Dry path: punchy attack with fast decay
           const dryG = ctx.createGain();
           dryG.gain.setValueAtTime(0.045, t);
           dryG.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
           o.connect(dryG); dryG.connect(this._dest());
-          // Wet path: through reverb for spatial tail
           const wetG = ctx.createGain();
           wetG.gain.setValueAtTime(0.025, t);
           wetG.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
@@ -1024,7 +1065,6 @@
           o.start(t); o.stop(t + 0.55);
         });
       });
-      // Shimmer: slow high-frequency sweep for sparkle
       const shimmer = ctx.createOscillator(), shG = ctx.createGain();
       shimmer.type = 'sine';
       shimmer.frequency.setValueAtTime(1047, now);
@@ -1035,11 +1075,12 @@
       shimmer.start(now); shimmer.stop(now + 1.0);
     },
 
-    // Void: noise sweep-down + distorted bass drop — weighty "failure" sound
+    // ---- playVoid: MP3 → synthesis fallback ----
     playVoid() {
       if (this.muted) return; this._ensure();
+      if (this._playBuffer('void', 0.8)) return;
+      // Fallback: noise sweep-down + distorted bass drop
       const ctx = this.ctx, now = ctx.currentTime;
-      // Noise sweep: lowpass filter sweeping down — "shhhh" dissolving
       const buf = _createNoiseBuffer(ctx, 0.6, 'pink');
       const src = ctx.createBufferSource(); src.buffer = buf;
       const lp = ctx.createBiquadFilter();
@@ -1050,15 +1091,13 @@
       nG.gain.setValueAtTime(0.11, now);
       nG.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
       src.connect(lp); lp.connect(nG); nG.connect(this._dest()); src.start(now);
-      // Bass drop with slight overdrive
       const bass = ctx.createOscillator(), bG = ctx.createGain();
       bass.type = 'triangle';
       bass.frequency.setValueAtTime(400, now);
       bass.frequency.exponentialRampToValueAtTime(50, now + 0.7);
       bG.gain.setValueAtTime(0.18, now);
-      bG.gain.exponentialRampToValueAtTime(0.3, now + 0.08); // small attack bump
+      bG.gain.exponentialRampToValueAtTime(0.3, now + 0.08);
       bG.gain.exponentialRampToValueAtTime(0.001, now + 0.75);
-      // Soft clip for overdrive
       const waveShaper = ctx.createWaveShaper();
       waveShaper.curve = new Float32Array([-1,-0.8,-0.6,-0.4,-0.2,0,0.2,0.4,0.6,0.8,1]);
       bass.connect(bG); bG.connect(waveShaper); waveShaper.connect(this._dest());
