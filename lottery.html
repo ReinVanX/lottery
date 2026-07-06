@@ -877,42 +877,26 @@
     src.connect(filter); filter.connect(g); g.connect(dest); src.start();
   }
 
-  function _createReverb(ctx, duration, decay) {
-    const sr = ctx.sampleRate, len = Math.floor(sr * duration);
-    const delay = ctx.createDelay(duration);
-    delay.delayTime.value = duration;
-    const feedback = ctx.createGain();
-    feedback.gain.value = decay;
-    const wet = ctx.createGain();
-    wet.gain.value = 0.35;
-    delay.connect(feedback); feedback.connect(delay); delay.connect(wet);
-    return { input: delay, output: wet, feedback };
-  }
 
   // ========== AudioEngine ==========
   const AudioEngine = {
     ctx: null, muted: false, buffers: {}, humSource: null, humGain: null,
-    humNodes: null, reverb: null,
+    humNodes: null,
 
     init() {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-      this.reverb = _createReverb(this.ctx, 0.3, 0.4);
-      this.reverb.output.connect(this.ctx.destination);
       const saved = localStorage.getItem('lottery_muted');
       if (saved === 'true') this.setMuted(true);
-      // Start async MP3 preload (non-blocking)
       this._loadSounds();
     },
 
     async _loadSounds() {
-      const names = ['tick', 'hum', 'reveal', 'celebrate', 'void'];
-      for (const name of names) {
+      for (const name of ['draw', 'win']) {
         try {
           const resp = await fetch('sounds/' + name + '.mp3');
           if (!resp.ok) throw new Error('HTTP ' + resp.status);
           const arrayBuf = await resp.arrayBuffer();
-          const audioBuf = await this.ctx.decodeAudioData(arrayBuf);
-          this.buffers[name] = audioBuf;
+          this.buffers[name] = await this.ctx.decodeAudioData(arrayBuf);
           console.log('Sound loaded: ' + name + '.mp3');
         } catch (e) {
           console.warn('Sound "' + name + '.mp3" not loaded, using fallback:', e.message);
@@ -948,40 +932,31 @@
 
     _dest() { return this.ctx.destination; },
 
-    // ---- playTick: MP3 → synthesis fallback ----
+    // ---- playTick: subtle click during spin (synthesis only, no MP3) ----
     playTick() {
       if (this.muted) return; this._ensure();
-      if (this._playBuffer('tick', 0.7)) return;
-      // Fallback: noise click + tonal ping
       const ctx = this.ctx, now = ctx.currentTime;
-      _playNoiseHit(ctx, 0.025, 0.09, 2400, 1.2, this._dest());
-      const osc = ctx.createOscillator(), g = ctx.createGain();
-      osc.type = 'sine'; osc.frequency.setValueAtTime(1400, now);
-      osc.frequency.exponentialRampToValueAtTime(900, now + 0.02);
-      g.gain.setValueAtTime(0.07, now);
-      g.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
-      osc.connect(g); g.connect(this._dest());
-      osc.start(now); osc.stop(now + 0.03);
+      _playNoiseHit(ctx, 0.02, 0.06, 2200, 1.5, this._dest());
     },
 
-    // ---- startHum: MP3 loop → synthesis fallback ----
+    // ---- startHum: draw.mp3 loop → synthesis fallback ----
     startHum() {
       if (this.muted) return; this._ensure();
-      if (this.buffers['hum']) {
+      if (this.buffers['draw']) {
         this.humSource = this.ctx.createBufferSource();
-        this.humSource.buffer = this.buffers['hum'];
+        this.humSource.buffer = this.buffers['draw'];
         this.humSource.loop = true;
         this.humGain = this.ctx.createGain();
-        this.humGain.gain.value = 0.55;
+        this.humGain.gain.value = 0.6;
         this.humSource.connect(this.humGain);
         this.humGain.connect(this.ctx.destination);
         this.humSource.start();
         return;
       }
-      // Fallback: 3 detuned sawtooths + sub-bass
+      // Fallback: detuned sawtooths + sub-bass (engine idle tension)
       const ctx = this.ctx, now = ctx.currentTime;
       const masterGain = ctx.createGain();
-      masterGain.gain.value = 0.045;
+      masterGain.gain.value = 0.04;
       masterGain.connect(this._dest());
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass'; lp.frequency.value = 350; lp.Q.value = 0.5;
@@ -997,28 +972,26 @@
       this.humNodes = { oscs, sub, subG, lp, masterGain };
     },
 
-    // ---- stopHum: stop MP3 or synthesis hum ----
+    // ---- stopHum: stop MP3 or synthesis ----
     stopHum() {
       if (this.humSource) {
         const now = this.ctx.currentTime;
-        this.humGain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
-        this.humSource.stop(now + 0.35);
+        this.humGain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+        this.humSource.stop(now + 0.3);
         this.humSource = null; this.humGain = null;
         return;
       }
       if (!this.humNodes) return;
       const now = this.ctx.currentTime;
       this.humNodes.masterGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-      const all = [...this.humNodes.oscs, this.humNodes.sub];
-      all.forEach(o => o.stop(now + 0.45));
+      [...this.humNodes.oscs, this.humNodes.sub].forEach(o => o.stop(now + 0.45));
       this.humNodes = null;
     },
 
-    // ---- playReveal: MP3 → synthesis fallback ----
-    playReveal() {
-      if (this.muted) return; this._ensure();
-      if (this._playBuffer('reveal', 0.85)) return;
-      // Fallback: noise burst + ding sweep + bass thud
+    // ---- playWin: win.mp3 → synthesis fallback ----
+    _playWin() {
+      if (this._playBuffer('win', 0.85)) return;
+      // Fallback: noise burst + bright ding sweep + bass thud
       const ctx = this.ctx, now = ctx.currentTime;
       _playNoiseHit(ctx, 0.18, 0.15, 900, 0.8, this._dest());
       [0, 5].forEach(det => {
@@ -1041,67 +1014,38 @@
       bass.start(now + 0.05); bass.stop(now + 0.8);
     },
 
-    // ---- playCelebrate: MP3 → synthesis fallback ----
-    playCelebrate() {
+    playReveal() {
       if (this.muted) return; this._ensure();
-      if (this._playBuffer('celebrate', 0.85)) return;
-      // Fallback: detuned squares + reverb tail + shimmer
-      const ctx = this.ctx, now = ctx.currentTime;
-      [523, 659, 784, 1047].forEach((freq, i) => {
-        const t = now + i * 0.12;
-        [-6, 0, 6].forEach(det => {
-          const o = ctx.createOscillator();
-          o.type = 'square'; o.frequency.value = freq; o.detune.value = det;
-          const dryG = ctx.createGain();
-          dryG.gain.setValueAtTime(0.045, t);
-          dryG.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
-          o.connect(dryG); dryG.connect(this._dest());
-          const wetG = ctx.createGain();
-          wetG.gain.setValueAtTime(0.025, t);
-          wetG.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
-          o.connect(wetG);
-          if (this.reverb) wetG.connect(this.reverb.input);
-          else wetG.connect(this._dest());
-          o.start(t); o.stop(t + 0.55);
-        });
-      });
-      const shimmer = ctx.createOscillator(), shG = ctx.createGain();
-      shimmer.type = 'sine';
-      shimmer.frequency.setValueAtTime(1047, now);
-      shimmer.frequency.exponentialRampToValueAtTime(2093, now + 0.8);
-      shG.gain.setValueAtTime(0.05, now);
-      shG.gain.exponentialRampToValueAtTime(0.001, now + 1.0);
-      shimmer.connect(shG); shG.connect(this._dest());
-      shimmer.start(now); shimmer.stop(now + 1.0);
+      this._playWin();
     },
 
-    // ---- playVoid: MP3 → synthesis fallback ----
+    playCelebrate() {
+      if (this.muted) return; this._ensure();
+      this._playWin();
+    },
+
+    // ---- playVoid: synthesis only (no MP3 needed for edge case) ----
     playVoid() {
       if (this.muted) return; this._ensure();
-      if (this._playBuffer('void', 0.8)) return;
-      // Fallback: noise sweep-down + distorted bass drop
       const ctx = this.ctx, now = ctx.currentTime;
-      const buf = _createNoiseBuffer(ctx, 0.6, 'pink');
+      const buf = _createNoiseBuffer(ctx, 0.5, 'pink');
       const src = ctx.createBufferSource(); src.buffer = buf;
       const lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass'; lp.frequency.setValueAtTime(3000, now);
-      lp.frequency.exponentialRampToValueAtTime(150, now + 0.55);
+      lp.type = 'lowpass'; lp.frequency.setValueAtTime(2500, now);
+      lp.frequency.exponentialRampToValueAtTime(120, now + 0.5);
       lp.Q.value = 0.4;
       const nG = ctx.createGain();
-      nG.gain.setValueAtTime(0.11, now);
-      nG.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      nG.gain.setValueAtTime(0.1, now);
+      nG.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
       src.connect(lp); lp.connect(nG); nG.connect(this._dest()); src.start(now);
       const bass = ctx.createOscillator(), bG = ctx.createGain();
       bass.type = 'triangle';
-      bass.frequency.setValueAtTime(400, now);
-      bass.frequency.exponentialRampToValueAtTime(50, now + 0.7);
-      bG.gain.setValueAtTime(0.18, now);
-      bG.gain.exponentialRampToValueAtTime(0.3, now + 0.08);
-      bG.gain.exponentialRampToValueAtTime(0.001, now + 0.75);
-      const waveShaper = ctx.createWaveShaper();
-      waveShaper.curve = new Float32Array([-1,-0.8,-0.6,-0.4,-0.2,0,0.2,0.4,0.6,0.8,1]);
-      bass.connect(bG); bG.connect(waveShaper); waveShaper.connect(this._dest());
-      bass.start(now); bass.stop(now + 0.8);
+      bass.frequency.setValueAtTime(350, now);
+      bass.frequency.exponentialRampToValueAtTime(45, now + 0.65);
+      bG.gain.setValueAtTime(0.16, now);
+      bG.gain.exponentialRampToValueAtTime(0.001, now + 0.7);
+      bass.connect(bG); bG.connect(this._dest());
+      bass.start(now); bass.stop(now + 0.75);
     }
   };
 
