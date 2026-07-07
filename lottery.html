@@ -54,19 +54,6 @@
       pointer-events: none;
       overflow: hidden;
     }
-    #bgDecor::before {
-      content: '2026';
-      position: absolute;
-      left: -2%;
-      top: 50%;
-      transform: translateY(-50%);
-      font-size: clamp(180px, 28vw, 360px);
-      font-weight: 900;
-      color: rgba(0, 194, 203, 0.04);
-      letter-spacing: -0.02em;
-      line-height: 1;
-      font-family: var(--font-display);
-    }
     #bgDecor::after {
       content: '';
       position: absolute;
@@ -74,6 +61,29 @@
       background:
         radial-gradient(ellipse 50% 40% at 85% 15%, rgba(0, 194, 203, 0.12) 0%, transparent 70%),
         radial-gradient(ellipse 30% 25% at 10% 80%, rgba(0, 136, 204, 0.08) 0%, transparent 70%);
+    }
+    .watermark {
+      position: absolute;
+      font-family: var(--font-display);
+      font-weight: 900;
+      line-height: 1;
+      pointer-events: none;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .watermark-brand {
+      left: 1vw;
+      top: 12vh;
+      font-size: clamp(72px, 13vw, 180px);
+      letter-spacing: 0.14em;
+      color: rgba(0, 194, 203, 0.045);
+    }
+    .watermark-year {
+      right: 5vw;
+      bottom: 4vh;
+      font-size: clamp(100px, 20vw, 260px);
+      letter-spacing: -0.02em;
+      color: rgba(0, 194, 203, 0.04);
     }
     .circuit-lines {
       position: absolute;
@@ -501,7 +511,7 @@
 
     /* === Print Styles === */
     @media (prefers-reduced-motion: reduce) {
-      .btn, .bracket-frame, .panel, #bgDecor::before { transition: none; animation: none; }
+      .btn, .bracket-frame, .panel, .watermark { transition: none; animation: none; }
     }
 
     @media print {
@@ -546,6 +556,8 @@
 </head>
 <body>
   <div id="bgDecor" aria-hidden="true">
+    <div class="watermark watermark-brand" aria-hidden="true">NEXTROVE</div>
+    <div class="watermark watermark-year" aria-hidden="true">2026</div>
     <div class="circuit-lines">
       <svg viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
         <defs>
